@@ -1,0 +1,1245 @@
+﻿//
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using System;
+#if UNITY_EDITOR
+using UnityEditor;
+using UnityEditor.SceneManagement;
+#endif
+//
+//
+using System.IO;
+using System.Text;
+//
+public class SilantroTurboFan : MonoBehaviour {
+	[HideInInspector]public string engineIdentifier = "Default Engine";
+	//CURRENT ENGINE STATE
+	public enum EngineState
+	{
+		Off,Starting,Running
+	}
+	[HideInInspector]public EngineState CurrentEngineState;
+	//START MODE
+	public enum EngineStartMode
+	{
+		Cold,Hot
+	}
+	[HideInInspector]public EngineStartMode engineStartMode = EngineStartMode.Cold;
+	//
+	//ENGINE DIMENSIONS
+	[HideInInspector]public float EngineDiameter = 1f;
+	[HideInInspector]public float IntakeDiameterPercentage = 90f;
+	[HideInInspector]public float ExhaustDiameterPercentage = 90f;
+	[HideInInspector]public float IntakeDiameter;
+	float intakeDiameter;
+	[HideInInspector]public float ExhaustDiameter;
+	[HideInInspector]public float weight = 500f;
+	[HideInInspector]public float overallLength = 4f;
+	[HideInInspector]public float bypassRatio = 1f;
+	[HideInInspector]public float OverallPressureRatio =10f;
+	//
+	[HideInInspector]public bool diplaySettings;
+	//
+	float intakeFactor;
+	float pitchFactor;
+	//ENGINE REHEAT SYSTEM (USES AFTERBURNER OR NOT)
+	public enum ReheatSystem
+	{
+		Afterburning,
+		noReheat
+	}
+	[HideInInspector]public ReheatSystem reheatSystem = ReheatSystem.noReheat;
+	[HideInInspector]public bool afterburnerOperative;
+	[HideInInspector]public float AfterburnerTSFC =2f;
+	[HideInInspector]public bool canUseAfterburner;
+	//
+	//ENGINE RPM CONFIGURATION
+	[HideInInspector]public float LowPressureFanRPM = 100f;
+	[HideInInspector]public float HighPressureFanRPM = 1000f;
+	[HideInInspector]public float RPMAcceleration = 0.5f;
+	[HideInInspector]public float LPRPM;
+	[HideInInspector]public float HPRPM;
+	[HideInInspector]public float TargetRPM;
+	[HideInInspector]public float CurrentRPM;
+	//
+	float LPIdleRPM;
+	float HPIdleRPM;
+	float currentHPRPM;
+	float targetHPRPM;
+	//
+	//ENGINE RUNNING VARIABLES
+	[HideInInspector]public bool active;
+	[HideInInspector]public float engineAcceleration = 0.2f;
+	[HideInInspector]public bool isAccelerating;
+	[HideInInspector]public float corePower;
+	[HideInInspector]public float EGT;
+	//
+	//ENGINE SOUND CONFIGURATION
+	[HideInInspector]public bool adjustPitchSettings;
+	[HideInInspector]public float EngineAfterburnerPitch = 1.75f;
+	[HideInInspector]public float EngineIdlePitch = 0.5f;
+	[HideInInspector]public float EngineMaximumRPMPitch = 1f;
+	[HideInInspector]public float maximumPitch = 2f;
+	[HideInInspector]public float engineVolume;
+	//
+	//1. EXTERIOR
+	[HideInInspector]public AudioClip ExteriorIgnitionSound;
+	[HideInInspector]public AudioClip ExteriorIdleSound;
+	[HideInInspector]public AudioClip ExteriorShutdownSound;
+	private AudioSource ExteriorIgnitionSource;
+	private AudioSource ExteriorIdleSource;
+	private AudioSource ExteriorShutdownSource;
+	//2. INTERIOR
+	[HideInInspector]public AudioClip InteriorIgnitionSound;
+	[HideInInspector]public AudioClip InteriorIdleSound;
+	[HideInInspector]public AudioClip InteriorShutdownSound;
+	private AudioSource InteriorIgnitionSource;
+	private AudioSource InteriorIdleSource;
+	private AudioSource InteriorShutdownSource;
+	//
+	public enum SoundState{Available,Absent}
+	[HideInInspector]public SoundState soundState = SoundState.Absent;
+	//
+	[HideInInspector]public SilantroCore computer;
+	[HideInInspector]public SilantroHydraulicSystem reverseBuckets;
+	//
+	//
+	//CALCULATION VARIABLES
+	[HideInInspector]public float intakeAirVelocity ;
+	[HideInInspector]public float intakeAirMassFlow ;
+	[HideInInspector]public float exhaustAirVelocity ;
+	[HideInInspector]public float coreAirMassFlow;
+	float  fanAirVelocity;
+	[HideInInspector]public float fuelMassFlow;
+	[HideInInspector]public float intakeArea;
+	float fuelFactor = 1f;
+	[HideInInspector]public float exhaustArea ;
+	float  fanThrust;
+	float  fanAirMassFlow;
+	float combusionFactor;
+	public enum ReverseThrust
+	{
+		Available,
+		NotAvailable
+	}
+	[HideInInspector]public ReverseThrust reverseThrust = ReverseThrust.NotAvailable;
+	[HideInInspector]public bool canReverseThrust;
+	[HideInInspector]public bool reverseThrustEngaged;
+	//
+	float ReverseForce;
+	float controlVariable;
+	//
+	//ENGINE EFFECTS
+	[HideInInspector]public ParticleSystem exhaustSmoke;
+	[HideInInspector]public ParticleSystem engineDistortion;
+	[HideInInspector]ParticleSystem.EmissionModule smokeModule;
+	[HideInInspector]ParticleSystem.EmissionModule distortionModule;
+	[HideInInspector]public float maximumDistortionEmission = 20;
+	[HideInInspector]public float maximumEmissionValue = 50f;
+	[HideInInspector]public float controlValue;
+	//
+	[HideInInspector]public Material engineMaterial;
+	[HideInInspector]public Material afterburnerTubeMaterial;
+	[HideInInspector]Color baseColor;
+	[HideInInspector]Color finalColor;
+	[HideInInspector]public float maximumNormalEmission;
+	[HideInInspector]public float maximumAfterburnerEmission;
+	//
+	//ENGINE FUEL SYSTEM
+	public enum FuelType
+	{
+		JetB,JetA1,JP6,JP8
+	}
+	[HideInInspector]public FuelType fuelType = FuelType.JetB;
+	[HideInInspector]public float combustionEnergy;
+	[HideInInspector]public SilantroFuelDistributor fuelSystem;
+	[HideInInspector]public float TSFC = 0.1f;
+	[HideInInspector]public float currentTankFuel;
+	[HideInInspector]public float criticalFuelLevel = 10f;
+	[HideInInspector]public float actualConsumptionrate;
+	[HideInInspector]bool InUse;
+	[HideInInspector]public bool LowFuel;
+	bool fuelAlertActivated;
+	float sfc;
+	//
+	//ENGINE EXTERNAL CONNECTIONS
+	[HideInInspector]public SilantroController controller;
+	[HideInInspector]public Rigidbody connectedAircraft;
+	[HideInInspector]public Transform IntakePoint;
+	[HideInInspector]public Transform ExhaustPoint;
+	[HideInInspector]public SilantroNozzle nozzleControl;
+	[HideInInspector]public bool canUseNozzle;
+	public enum RotationAxis
+	{
+		X,Y,Z
+	}
+	[HideInInspector]public RotationAxis rotationAxis = RotationAxis.X;
+	//
+	public enum RotationDirection
+	{
+		CW,CCW
+	}
+	[HideInInspector]public RotationDirection rotationDirection = RotationDirection.CCW;
+	//
+	//
+	//ENGINE DATA RECORDING
+	[HideInInspector]public bool saveEngineData = false;
+	[HideInInspector]public string saveLocation = "C:/Users/";
+	[HideInInspector]public float dataLogRate = 5f;
+	[HideInInspector]public bool InculdeUnits = true;
+	//
+	//ENGINE CONTROL VARIABLES
+	[HideInInspector]public float FuelInput = 0.2f;
+	float aircraftSpeed;
+	float knotsSpeed;
+	float speedFactor;
+	float rpmFactor;float value;[HideInInspector]public float coreFactor,functionalRPM;
+	//CONTROL BOOLS
+	[HideInInspector]public bool start;
+	[HideInInspector]public bool stop;
+	private bool starting;
+	[HideInInspector]public bool isControllable;
+	//ENVIRONMENTAL VARIABLES
+	float ambientPressure;
+	[HideInInspector]public float airDensity = 1.225f;
+	[HideInInspector]public float EngineThrust;
+
+
+
+
+
+
+
+
+	//ENGINE CONTROL FUNCTIONS
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	public void StartEngine()
+	{
+		//MAKE SURE THERE IS FUEL TO START THE ENGINE
+		if (fuelSystem && fuelSystem.TotalFuelRemaining > 1f) {
+			if (ExteriorIdleSound != null || ExteriorIgnitionSound != null || ExteriorShutdownSound != null){
+				//MAKE SURE CORRECT FUEL IS SELECTED
+				if (fuelType.ToString () == fuelSystem.fuelType.ToString ()) {
+
+					if (engineStartMode == EngineStartMode.Cold) {
+						start = true;
+					}
+					if (engineStartMode == EngineStartMode.Hot) {
+						//JUMP START ENGINE
+						active = true;
+						RunEngine ();
+						starting = false;
+						CurrentEngineState = EngineState.Running;
+					}
+				}
+			} else {
+				Debug.Log ("Engine " + transform.name + " cannot start due to incorrect fuel selection");
+			}
+		}
+		if (ExteriorIdleSound == null || ExteriorIgnitionSound == null || ExteriorShutdownSound == null){
+			Debug.Log ("Engine " + transform.name + " cannot start due to incorrect Audio configuration");
+		}
+	}
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	public void ShutDownEngine()
+	{
+		stop = true;
+	}
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//AFTERBURNER CONTROL
+	public void ToggleAfterburner()
+	{
+		if(canUseAfterburner && corePower > 0.5f && FuelInput > 0.5f) {
+			afterburnerOperative = !afterburnerOperative;
+		}
+	}
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//SET THROTTLE VALUE
+	public void SetEngineThrottle(float inputThrottle)
+	{
+		if (inputThrottle < 1.1f) {
+			FuelInput = inputThrottle;
+		}
+	}
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//TOGGLE REVERSE THRUST
+	public void InitiateReverseControl()
+	{
+		if( canReverseThrust && corePower > 0.5f) {
+			reverseThrustEngaged = !reverseThrustEngaged;
+			if (reverseBuckets) {
+				if (reverseBuckets.currentState == SilantroHydraulicSystem.CurrentState.Closed) {
+					reverseBuckets.open = true;
+				} else {
+					reverseBuckets.close = true;
+				}
+			}
+		}
+	}
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	bool allOk;
+	protected void _checkPrerequisites() {
+		//CHECK COMPONENTS
+		if (fuelSystem != null && computer != null && connectedAircraft != null) {
+			allOk = true;
+		} else if (fuelSystem == null) {
+			Debug.LogError("Prerequisites not met on Engine "+transform.name + "....Fuel System not connected");
+			allOk = false;
+		}
+		else if (computer == null) {
+			Debug.LogError("Prerequisites not met on Engine "+transform.name + "....Core not connected");
+			allOk = false;
+		}
+		else if (connectedAircraft == null) {
+			Debug.LogError("Prerequisites not met on Engine "+transform.name + "....Aircraft not connected");
+			allOk = false;
+		}
+	}
+
+
+
+
+	//DRAW ENGINE LAYOUT	
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	#if UNITY_EDITOR
+	void OnDrawGizmos()
+	{
+		//
+		ExhaustDiameter = EngineDiameter * ExhaustDiameterPercentage/100f;
+		Handles.color = Color.red;
+		if(ExhaustPoint != null){
+			Handles.DrawWireDisc (ExhaustPoint.position, ExhaustPoint.transform.forward, (ExhaustDiameter/2f));
+		}
+		IntakeDiameter = EngineDiameter * IntakeDiameterPercentage / 100f;
+		Handles.color = Color.blue;
+		if(IntakePoint != null && connectedAircraft!=null){
+			Handles.DrawWireDisc (IntakePoint.transform.position, connectedAircraft.transform.forward, (IntakeDiameter / 2f));
+		}
+		//
+		Handles.color = Color.cyan;
+		if(ExhaustPoint != null && IntakePoint != null ){
+			Handles.DrawLine (IntakePoint.transform.position, ExhaustPoint.position);
+		}
+	}
+	#endif
+
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	public void InitializeEngine () {
+
+
+		//CHECK SYSTEMS
+		_checkPrerequisites();
+
+
+		if(allOk){
+		//SETUP SOUND SYSTEM
+		SoundConfiguration();
+		//SETUP EFFECTS
+		EffectsInitial();
+		//RECIEVE DIAMETER
+		intakeDiameter = IntakeDiameter;
+		//
+		//SET UP MASS FACTOR FOR EGT CALCULATION
+		fuelMassFlow = TSFC / 1000f;
+		//SET IDLE RPM VALUES
+		LPIdleRPM = LowPressureFanRPM * 0.1f;
+		HPIdleRPM = HighPressureFanRPM * 0.09f;
+		functionalRPM = HighPressureFanRPM;
+		//
+		//SET UP ENGINE FUEL COMBUSTION VALUES
+		if (fuelType == FuelType.JetB){combustionEnergy = 42.8f;}
+		else if (fuelType == FuelType.JetA1) {combustionEnergy = 43.5f;}
+		else if (fuelType == FuelType.JP6) {combustionEnergy = 49.6f;} 
+		else if (fuelType == FuelType.JP8) {combustionEnergy = 43.28f;}
+		intakeFactor = UnityEngine.Random.Range(0.38f,0.45f);//FACTOR OF TEMPERATURE IN FUTURE UPDATES
+		combusionFactor = combustionEnergy/42f;
+		//
+		//RESET VALUES
+		active = false;
+		starting = false;start = false;stop = false;
+		afterburnerOperative = false;
+		//SET ENGINE JUMP START VALUE;
+		if (engineStartMode == EngineStartMode.Hot) {RPMAcceleration = 10f;engineAcceleration = 10f;}
+		if (reheatSystem == ReheatSystem.Afterburning) {canUseAfterburner = true;} 
+		else if (reheatSystem == ReheatSystem.noReheat) {canUseAfterburner = false;}
+		if (reverseThrust == ReverseThrust.Available) {canReverseThrust = true;} 
+		else {canReverseThrust = false;}reverseThrustEngaged = false;
+		if (nozzleControl) {nozzleControl.ExhaustPoint = ExhaustPoint;}
+		}
+	}
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//SETUP EFFECTS
+	void EffectsInitial()
+	{
+		baseColor = Color.white;
+		if (exhaustSmoke != null) {smokeModule = exhaustSmoke.emission;smokeModule.rateOverTime = 0f;}
+		if (engineDistortion != null) {distortionModule = engineDistortion.emission;distortionModule.rateOverTime = 0f;}
+		if (engineMaterial != null) {finalColor = baseColor * Mathf.LinearToGammaSpace (0.0f);engineMaterial.SetColor ("_EmissionColor", finalColor);}
+		//
+		if (afterburnerTubeMaterial != null) {afterburnerTubeMaterial.SetColor("_EmissionColor", finalColor);}
+	}
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	void SoundConfiguration()
+	{
+		//CREATE A GAMEOBJECT TO ADD SOUND SOURCE TO
+		//1. EXTERIOR
+		GameObject exteriorSoundPoint = new GameObject();
+		exteriorSoundPoint.transform.parent = this.transform;
+		exteriorSoundPoint.transform.localPosition = new Vector3 (0, 0, 0);
+		exteriorSoundPoint.name = "Exterior Sound Point";
+		//SETUP IGNITION
+		if (ExteriorIgnitionSound != null) {
+			ExteriorIgnitionSource = exteriorSoundPoint.gameObject.AddComponent<AudioSource>();
+			ExteriorIgnitionSource.clip = ExteriorIgnitionSound;//Assign sound
+			ExteriorIgnitionSource.loop = false;//Ignition sound should only be played once
+			ExteriorIgnitionSource.dopplerLevel = 0f;//
+			ExteriorIgnitionSource.spatialBlend = 1f;//Make sterio
+			ExteriorIgnitionSource.rolloffMode = AudioRolloffMode.Custom;//Limit sound range
+			ExteriorIgnitionSource.maxDistance = 650f;//Actual Sound Range
+		}
+		//SETUP IDLE
+		if (ExteriorIdleSound != null) {
+			ExteriorIdleSource = exteriorSoundPoint.gameObject.AddComponent<AudioSource>();
+			ExteriorIdleSource.clip = ExteriorIdleSound;
+			ExteriorIdleSource.loop = true;
+			ExteriorIdleSource.Play();
+			ExteriorIdleSource.volume = 0f;
+			ExteriorIdleSource.spatialBlend = 1f;
+			ExteriorIdleSource.dopplerLevel = 0f;
+			ExteriorIdleSource.rolloffMode = AudioRolloffMode.Custom;
+			ExteriorIdleSource.maxDistance = 600f;
+		}
+		//SETUP SHUTDOWN
+		if (ExteriorShutdownSound != null) {
+			ExteriorShutdownSource = exteriorSoundPoint.gameObject.AddComponent<AudioSource>();
+			ExteriorShutdownSource.clip = ExteriorShutdownSound;
+			ExteriorShutdownSource.loop = false;
+			ExteriorShutdownSource.dopplerLevel = 0f;
+			ExteriorShutdownSource.spatialBlend = 1f;
+			ExteriorShutdownSource.rolloffMode = AudioRolloffMode.Custom;
+			ExteriorShutdownSource.maxDistance = 650f;
+		}
+		//
+		if (soundState == SoundState.Available) {
+			//2. INTERIOR
+			GameObject interiorSoundPoint = new GameObject ();
+			interiorSoundPoint.transform.parent = this.transform;
+			interiorSoundPoint.transform.localPosition = new Vector3 (0, 0, 0);
+			interiorSoundPoint.name = "Interior Sound Point";
+			//
+			//SETUP IGNITION
+			if (InteriorIgnitionSound != null) {
+				InteriorIgnitionSource = interiorSoundPoint.gameObject.AddComponent<AudioSource> ();
+				InteriorIgnitionSource.clip = InteriorIgnitionSound;//Assign sound
+				InteriorIgnitionSource.loop = false;//Ignition sound should only be played once
+				InteriorIgnitionSource.dopplerLevel = 0f;//
+				InteriorIgnitionSource.spatialBlend = 1f;//Make sterio
+				InteriorIgnitionSource.rolloffMode = AudioRolloffMode.Custom;//Limit sound range
+				InteriorIgnitionSource.maxDistance = 650f;//Actual Sound Range
+			}
+			//SETUP IDLE
+			if (InteriorIdleSound != null) {
+				InteriorIdleSource = interiorSoundPoint.gameObject.AddComponent<AudioSource> ();
+				InteriorIdleSource.clip = InteriorIdleSound;
+				InteriorIdleSource.loop = true;
+				InteriorIdleSource.Play ();
+				InteriorIdleSource.volume = 0f;
+				InteriorIdleSource.spatialBlend = 1f;
+				InteriorIdleSource.dopplerLevel = 0f;
+				InteriorIdleSource.rolloffMode = AudioRolloffMode.Custom;
+				InteriorIdleSource.maxDistance = 600f;
+			}
+			//SETUP SHUTDOWN
+			if (InteriorShutdownSound != null) {
+				InteriorShutdownSource = interiorSoundPoint.gameObject.AddComponent<AudioSource> ();
+				InteriorShutdownSource.clip = InteriorShutdownSound;
+				InteriorShutdownSource.loop = false;
+				InteriorShutdownSource.dopplerLevel = 0f;
+				InteriorShutdownSource.spatialBlend = 1f;
+				InteriorShutdownSource.rolloffMode = AudioRolloffMode.Custom;
+				InteriorShutdownSource.maxDistance = 650f;
+			}
+		}
+	}
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	[HideInInspector]public float liftFactor = 1f;
+	void FixedUpdate()
+	{
+		if (isControllable) {
+			//RPM
+			LPRPM = CurrentRPM;
+			HPRPM = currentHPRPM;
+			if (CurrentRPM <= 0f) {CurrentRPM = 0f;}
+			//APPLY GENERATED FORCE
+			if (EngineThrust > 0f && connectedAircraft != null) {
+				Vector3 force = ExhaustPoint.forward * EngineThrust * liftFactor;
+				if (!reverseThrustEngaged) {
+					connectedAircraft.AddForce (force, ForceMode.Force);
+				} else {
+					ReverseForce = fanThrust * controlVariable * liftFactor;
+					Vector3 rforce = ExhaustPoint.forward * ReverseForce * -1f;
+					connectedAircraft.AddForce (rforce, ForceMode.Force);
+				}
+			}
+			//
+			if (fuelSystem != null) {currentTankFuel = fuelSystem.TotalFuelRemaining;}
+			//ROTATE ENGINE FAN
+			if (IntakePoint) {
+				if (rotationDirection == RotationDirection.CCW) {
+					if (rotationAxis == RotationAxis.X) {IntakePoint.Rotate (new Vector3 (CurrentRPM * Time.deltaTime, 0, 0));}
+					if (rotationAxis == RotationAxis.Y) {IntakePoint.Rotate (new Vector3 (0, CurrentRPM * Time.deltaTime, 0));}
+					if (rotationAxis == RotationAxis.Z) {IntakePoint.Rotate (new Vector3 (0, 0, CurrentRPM * Time.deltaTime));}
+				}
+				//
+				if (rotationDirection == RotationDirection.CW) {
+					if (rotationAxis == RotationAxis.X) {IntakePoint.Rotate (new Vector3 (-1f * CurrentRPM * Time.deltaTime, 0, 0));}
+					if (rotationAxis == RotationAxis.Y) {IntakePoint.Rotate (new Vector3 (0, -1f * CurrentRPM * Time.deltaTime, 0));}
+					if (rotationAxis == RotationAxis.Z) {IntakePoint.Rotate (new Vector3 (0, 0, -1f * CurrentRPM * Time.deltaTime));}
+				}
+			}
+		}
+	}
+
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	void Update()
+	{
+		if (isControllable && controller != null && allOk) {
+			//SEND CORE DATA
+			CoreEngine();
+			//SEND FUEL DATA
+			if (InUse && fuelSystem != null) {UseFuel ();}
+			//SEND CALCULATION DATA
+			if (corePower > 0f) {EngineCalculation ();}
+			//ENGINE STATE CONTROL
+			if (ExteriorIgnitionSound != null && ExteriorIdleSound != null && ExteriorShutdownSound != null) {
+				switch (CurrentEngineState) {
+				case EngineState.Off:
+					ShutdownEngineProcedure ();
+					break;
+				case EngineState.Starting:
+					StartEngineProcedure ();
+					break;
+				case EngineState.Running:
+					RunEngine ();
+					break;
+				}
+			}
+			//INTERPOLATE ENGINE RPM
+			if (active) {
+				CurrentRPM = Mathf.Lerp (CurrentRPM, TargetRPM, RPMAcceleration * Time.deltaTime * (corePower  * fuelFactor));
+				currentHPRPM = Mathf.Lerp (currentHPRPM, targetHPRPM, RPMAcceleration * Time.deltaTime * (corePower  * fuelFactor));
+				//exhaustModule.rateOverTime = (corePower * maximumEmmisionValue);
+			} else {
+				CurrentRPM = Mathf.Lerp (CurrentRPM, 0.0f, RPMAcceleration * Time.deltaTime);
+				currentHPRPM = Mathf.Lerp (currentHPRPM, 0.0f, RPMAcceleration * Time.deltaTime);
+			}
+			//
+			coreFactor = CurrentRPM/LowPressureFanRPM;coreRPM = LPRPM;
+			engineVolume = ((LPRPM/LowPressureFanRPM));engineVolume = Mathf.Clamp(engineVolume,0f,1f);
+			//FILTER "NAN" value OUT TO AVOID PROBLEMS WITH WEBGL
+			if (engineVolume > 0.0001f && engineVolume < 2f && ExteriorIdleSource != null) {
+				if (soundState == SoundState.Available && InteriorIdleSource != null && controller.currentSoundState == SilantroController.SoundState.Interior) { 
+					InteriorIdleSource.volume = engineVolume;ExteriorIdleSource.volume = 0f;
+				} else {
+					ExteriorIdleSource.volume = engineVolume;
+					if (InteriorIdleSource != null) {InteriorIdleSource.volume = 0f;}
+				}
+			}
+
+			//MONITOR OTHER ENGINE SOUND STATES
+			if (controller.currentSoundState == SilantroController.SoundState.Exterior && ExteriorIgnitionSource != null && ExteriorShutdownSource != null) {
+				ExteriorIgnitionSource.volume = 1f;ExteriorShutdownSource.volume = 1f;
+				if (InteriorIdleSource != null && InteriorIgnitionSource != null) {
+					InteriorIgnitionSource.volume = 0f;
+					InteriorShutdownSource.volume = 0f;
+				}
+			} 
+			else if(controller.currentSoundState == SilantroController.SoundState.Interior && InteriorIgnitionSource != null && InteriorShutdownSource != null)
+			{
+				ExteriorIgnitionSource.volume = 0f;InteriorIgnitionSource.volume = 1f;
+				ExteriorShutdownSource.volume = 0f;InteriorShutdownSource.volume = 1f;
+			}
+			//
+			//ENGINE EFFECTS
+			if (active == true) {controlValue = corePower;}
+			else {controlValue = Mathf.Lerp (controlValue, 0f, 0.04f);}
+			//
+			if (afterburnerOperative) {
+				value = maximumAfterburnerEmission;
+				if (exhaustSmoke != null) {smokeModule.rateOverTime = 1.5f * maximumEmissionValue * corePower * coreFactor;}
+				if (engineDistortion != null) {distortionModule.rateOverTime = 1.5f * maximumDistortionEmission * corePower * coreFactor;}
+			} else {
+				value = Mathf.Lerp (value, maximumNormalEmission, 0.02f);
+				if (exhaustSmoke != null) {smokeModule.rateOverTime = maximumEmissionValue * corePower * coreFactor;}
+				if (engineDistortion != null) {distortionModule.rateOverTime = maximumDistortionEmission * corePower * coreFactor;}
+			}
+			float actualValue = (controlValue) * value * coreFactor;
+			//
+			if (engineMaterial != null) {finalColor = baseColor * Mathf.LinearToGammaSpace (actualValue);engineMaterial.SetColor ("_EmissionColor", finalColor);}
+			if (afterburnerTubeMaterial != null) {afterburnerTubeMaterial.SetColor("_EmissionColor", finalColor);}
+		
+			//CALCULATE ENGINE PITCH
+			if (ExteriorIdleSound != null && connectedAircraft != null) {
+				float aircraftSpeed = connectedAircraft.velocity.magnitude;
+				float knotsSpeed = aircraftSpeed * 1.943f;
+				float speedFactor = LPRPM + knotsSpeed + 10f;
+				float rpmFactor = (speedFactor - LPIdleRPM) / (LowPressureFanRPM - LPIdleRPM);
+				//
+				if (afterburnerOperative) {
+					pitchFactor = EngineIdlePitch + (EngineAfterburnerPitch - EngineIdlePitch) * rpmFactor;
+				} else {
+					pitchFactor = EngineIdlePitch + (EngineMaximumRPMPitch - EngineIdlePitch) * rpmFactor;
+				}
+				pitchFactor = Mathf.Clamp (pitchFactor, 0, maximumPitch);
+			} 
+			float startRange;
+			float endRange;
+			float cycleRange;
+			float offset;
+
+			//SIMULATE ENGINE FUEL CHOKING
+			if (fuelSystem != null && ExteriorIdleSound != null){
+				if (fuelSystem.TotalFuelRemaining <= criticalFuelLevel) {
+					if (active) {
+						startRange = 0.6f;endRange = 1.0f;
+						cycleRange = (endRange - startRange) / 2f;
+						offset = cycleRange + startRange;
+						//
+						fuelFactor = offset + Mathf.Sin (Time.time * 3f) * cycleRange;
+						ExteriorIdleSource.pitch = fuelFactor;
+						if (InteriorIdleSource != null && soundState == SoundState.Available) {
+							InteriorIdleSource.pitch = fuelFactor;
+						}
+					}
+				}
+				else {
+					ExteriorIdleSource.pitch = pitchFactor * corePower;
+					if (InteriorIdleSource != null && soundState == SoundState.Available) {
+						InteriorIdleSource.pitch = pitchFactor * corePower;
+					}
+				}
+			} 
+
+			//STOP ENGINE IF FUEL IS EXHAUSTED
+			if (fuelSystem != null && fuelSystem.TotalFuelRemaining <= 1) {
+				stop = true;
+			}
+		} 
+	}
+
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//ENGINE RUN CONFIGURATION
+	private void RunEngine()
+	{
+		//STOP IGINITION SOUND IF ITS STILL PLAYING
+		if (ExteriorIgnitionSource.isPlaying) {ExteriorIgnitionSource.Stop ();}
+		if (InteriorIdleSource != null && soundState == SoundState.Available) {
+			if (InteriorIgnitionSource.isPlaying) {
+				InteriorIgnitionSource.Stop ();
+			}
+		}
+		//CLAMP ENGINE INPUT
+		FuelInput = Mathf.Clamp(FuelInput,0f,1f);InUse = true;
+		//ENGINE RPM CALCULATION
+		TargetRPM = LPIdleRPM + (LowPressureFanRPM - LPIdleRPM) * FuelInput;
+		targetHPRPM = HPIdleRPM + (HighPressureFanRPM - HPIdleRPM) * FuelInput; 
+		//STOP ENGINE
+		if (stop)
+		{
+			CurrentEngineState = EngineState.Off;
+			ExteriorShutdownSource.Play();
+			if (InteriorIdleSource != null && soundState == SoundState.Available) {
+				InteriorShutdownSource.Play ();
+			}
+			active = false;EngineThrust = 0;FuelInput = 0f;StartCoroutine(WaitForShutdown());
+			StartCoroutine(ReturnIgnition());
+		}
+	}
+
+
+	IEnumerator WaitForShutdown()
+	{
+		yield return new WaitForSeconds (ExteriorShutdownSound.length);
+		ExteriorIdleSource.volume = 0f;if(InteriorIdleSource){InteriorIdleSource.volume = 0f;}
+		if (fuelSystem) {
+			fuelSystem.StopAlertSound ();
+		}
+	}
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//START ENGINE
+	private void StartEngineProcedure()
+	{
+		if (starting){
+			if (!ExteriorIgnitionSource.isPlaying) {
+				CurrentEngineState = EngineState.Running;
+				starting = false;
+				RunEngine();
+			}
+		}
+		else
+		{
+			ExteriorIgnitionSource.Stop();
+			if (InteriorIdleSource != null && soundState == SoundState.Available) {
+				InteriorIgnitionSource.Stop ();
+			}
+			CurrentEngineState = EngineState.Off;
+		}
+		TargetRPM = LPIdleRPM;
+		targetHPRPM = HPIdleRPM;
+	}
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//STOP ENGINE
+	private void ShutdownEngineProcedure()
+	{
+		//STOP IGNITION SOUND IF PLAYING
+		if (ExteriorIgnitionSource.isPlaying)
+		{
+			ExteriorIgnitionSource.Stop();
+			if (InteriorIdleSource != null && soundState == SoundState.Available) {
+				InteriorIgnitionSource.Stop ();
+			}
+			start = false;
+		}
+		//START ENGINE PROCEDURE
+		if (start)
+		{
+			active = true;
+			ExteriorIgnitionSource.Play();
+			if (InteriorIdleSource != null && soundState == SoundState.Available) {
+				InteriorIgnitionSource.Play ();
+			}
+			CurrentEngineState = EngineState.Starting;
+			starting = true;
+			//RESET
+			StartCoroutine(ReturnIgnition());
+		}
+		//SET RPM VALUES
+		TargetRPM = 0f;
+		targetHPRPM = 0f;
+	}
+
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//ACCELERATE AND DECELERATE ENGINE
+	private void CoreEngine()
+	{
+		if (active){
+			if (corePower < 1f && !isAccelerating){
+				//REV UP ENGINE
+				corePower += Time.deltaTime * engineAcceleration;
+				//Calculate EGT
+			}
+		}
+		else if (corePower > 0f){corePower -= Time.deltaTime * engineAcceleration;}
+		if (!active && corePower < 0) {corePower = 0f;EGT = 0f;}
+		if (corePower > 1) {corePower = 1f;}
+	}
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//RESET CONTROL VALUES
+	public IEnumerator ReturnIgnition()
+	{
+		yield return new WaitForSeconds (0.5f);
+		start = false;
+		stop = false;
+	}
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//CALCULATE FUEL FLOW
+	private float poundThrust;
+	void CalculateFuelFlow(float currentThrust)
+	{
+		poundThrust = currentThrust / 4.448f;
+		if (afterburnerOperative) {sfc = (poundThrust * AfterburnerTSFC) / 3600f;} 
+		else {sfc = (poundThrust * TSFC) / 3600f;}
+		//
+		fuelMassFlow = sfc*0.4536f;
+	}
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//DEPLETE FUEL LEVEL WITH USAGE
+	private void UseFuel()
+	{
+		actualConsumptionrate = combusionFactor*fuelMassFlow * corePower;
+		//SHUTDOWN ENGINE IF FUEL IS EXPENDED
+		if (fuelSystem != null && fuelSystem.TotalFuelRemaining == 0f){stop = true;}
+	}
+
+
+
+
+
+
+
+
+	// ----------------------------------------------------------------------------------------------------------------------------------------------------------
+	//CALCULATE ENGINE THRUST
+	float bypassfactor;
+	float coreThrust;[HideInInspector]public float coreRPM;
+	private void EngineCalculation()
+	{
+		//COLLECT ENVIRONMENTAL/AMBIENT VARIABLES
+		if (computer != null) {
+			airDensity = computer.airDensity;
+			ambientPressure = computer.ambientPressure;
+		} else {
+			airDensity = 1.225f;
+			ambientPressure = 102f;
+		}
+		if (connectedAircraft != null) {
+			aircraftSpeed = connectedAircraft.velocity.magnitude;
+		}
+		//CORE CALCULATIONS
+		intakeArea = (3.142f * intakeDiameter * intakeDiameter) / 4f;
+		exhaustArea = (3.142f * ExhaustDiameter * ExhaustDiameter) / 4f;
+		//
+		intakeAirVelocity = (3.142f * intakeDiameter * LPRPM) / 60f;
+		fanAirVelocity = intakeAirVelocity * intakeFactor;
+		exhaustAirVelocity = (3.142f * ExhaustDiameter * HPRPM) / 60f;
+		intakeAirMassFlow = airDensity * intakeArea * fanAirVelocity;
+		bypassfactor = (1+bypassRatio);
+		coreAirMassFlow = (1 / bypassfactor) * intakeAirMassFlow;
+		fanAirMassFlow = (bypassRatio / bypassfactor) * intakeAirMassFlow;
+		//
+		fanThrust = fanAirMassFlow *(intakeAirVelocity - aircraftSpeed);
+		//
+		if (afterburnerOperative && FuelInput < 0.5f) {
+			afterburnerOperative = false;
+		}
+		//Afterburner Calculations
+		if (afterburnerOperative) {
+			coreThrust = (((coreAirMassFlow + fuelMassFlow) * (exhaustAirVelocity * 1.5f)) - ((coreAirMassFlow * aircraftSpeed)*0.4f) + (exhaustArea * ((OverallPressureRatio * ambientPressure) - ambientPressure)));
+		} else {
+			coreThrust = (((coreAirMassFlow + fuelMassFlow) * (exhaustAirVelocity)) - ((coreAirMassFlow * aircraftSpeed)*0.4f) + (exhaustArea * ((OverallPressureRatio * ambientPressure) - ambientPressure)));
+		}
+		//
+		if (reverseThrustEngaged) {
+			controlVariable = Mathf.Lerp (controlVariable, 1f, 0.02f);
+		} else {
+			controlVariable = Mathf.Lerp (controlVariable, 0f, 0.02f);
+		}
+		if (controlVariable < 0) {controlVariable = 0;}
+		if (!reverseThrustEngaged) {
+			EngineThrust = (coreThrust + fanThrust)*coreFactor;//TOTAL THRUST GENERATED
+		} else
+		{
+			EngineThrust = (coreThrust + fanThrust-ReverseForce)*coreFactor;
+		}
+		//MAKE SURE THRUST IS NEVER NEGATIVE
+		if (EngineThrust < 0) {
+			EngineThrust = 0;
+		}
+		////CALULATE FUEL FLOW
+		if (EngineThrust > 0) {
+			CalculateFuelFlow (EngineThrust);
+		}
+	}
+}
+
+
+
+
+
+
+
+
+#if UNITY_EDITOR
+[CustomEditor(typeof(SilantroTurboFan))]
+public class TurbofanEditor: Editor
+{
+	Color backgroundColor;
+	Color silantroColor = new Color(1,0.75f,0.016f,1f);
+	//
+	[HideInInspector]public int toolbarTab;
+	[HideInInspector]public string currentTab;
+	//
+	//SOUNDS
+	[HideInInspector]public int EngineTab;
+	[HideInInspector]public string currentEngineTab;
+	//
+	SilantroTurboFan fan;
+	SerializedObject engineObject;
+	//
+	private void OnEnable()
+	{
+		fan = (SilantroTurboFan)target;
+		engineObject = new SerializedObject (fan);
+	}
+	//
+	public override void OnInspectorGUI()
+	{
+		backgroundColor = GUI.backgroundColor;
+		//
+		DrawDefaultInspector ();EditorGUI.BeginChangeCheck();
+		engineObject.UpdateIfRequiredOrScript();
+		//
+		GUILayout.Space(2f);
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Engine Identifier", MessageType.None);
+		GUI.color = backgroundColor;
+		fan.engineIdentifier = EditorGUILayout.TextField (" ", fan.engineIdentifier);
+
+		GUILayout.Space(10f);
+		//
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Engine Dimensions", MessageType.None);
+		GUI.color = backgroundColor;
+		//DISPLAY ENGINE DIMENSIONS
+		 fan.EngineDiameter = EditorGUILayout.FloatField("Engine Diameter", fan.EngineDiameter);
+		GUILayout.Space(2f);
+		 fan.IntakeDiameterPercentage = EditorGUILayout.Slider ("Intake Diameter Percentage", fan.IntakeDiameterPercentage,0,100);
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("Intake Diameter",  fan.IntakeDiameter.ToString ("0.00") + " m");
+		GUILayout.Space(2f);
+		 fan.ExhaustDiameterPercentage = EditorGUILayout.Slider ("Exhaust Diameter Percentage", fan.ExhaustDiameterPercentage,0,100);
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("Exhaust Diameter",  fan.ExhaustDiameter.ToString ("0.00") + " m");
+		//
+		GUILayout.Space(3f);
+		 fan.weight = EditorGUILayout.FloatField("Engine Weight", fan.weight);
+		GUILayout.Space(2f);
+		 fan.overallLength = EditorGUILayout.FloatField("Overall Length", fan.overallLength);
+		//
+		GUILayout.Space(25f);
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Turbine Configuration", MessageType.None);
+		GUI.color = backgroundColor;
+		 fan.LowPressureFanRPM = EditorGUILayout.FloatField ("Low Pressure RPM",  fan.LowPressureFanRPM);
+		GUILayout.Space(2f);
+		 fan.HighPressureFanRPM = EditorGUILayout.FloatField ("High Pressure RPM",  fan.HighPressureFanRPM);
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("N1", fan.LPRPM.ToString("0.00")+ " RPM");
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("N2", fan.HPRPM.ToString("0.00")+ " RPM");
+		//
+		if (fan.engineStartMode == SilantroTurboFan.EngineStartMode.Cold) {
+			GUILayout.Space (2f);
+			 fan.RPMAcceleration = EditorGUILayout.FloatField ("Engine Acceleration",  fan.RPMAcceleration);
+		} 
+		//
+		GUILayout.Space(10f);
+		fan.bypassRatio = EditorGUILayout.FloatField ("Bypass Ratio",  fan.bypassRatio);
+		GUILayout.Space(3f);
+		 fan.OverallPressureRatio = EditorGUILayout.FloatField ("Pressure Ratio",  fan.OverallPressureRatio);
+		//
+		GUILayout.Space(10f);
+		 fan.reheatSystem = (SilantroTurboFan.ReheatSystem)EditorGUILayout.EnumPopup ("Reheat System",  fan.reheatSystem);
+		//
+		if ( fan.reheatSystem == SilantroTurboFan.ReheatSystem.Afterburning) {
+			GUILayout.Space(3f);
+			GUI.color = Color.white;
+			EditorGUILayout.HelpBox ("Afterburner Control", MessageType.None);
+			GUI.color = backgroundColor;
+			GUILayout.Space(2f);
+			 fan.afterburnerOperative = EditorGUILayout.Toggle ("Afterburner Switch",  fan.afterburnerOperative);
+		}
+		//
+		GUILayout.Space(10f);
+		GUI.color = Color.white;
+		EditorGUILayout.HelpBox ("Reverse Thrust System", MessageType.None);
+		GUI.color = backgroundColor;
+		GUILayout.Space(2f);
+		fan.reverseThrust = (SilantroTurboFan.ReverseThrust)EditorGUILayout.EnumPopup(" ",fan.reverseThrust);
+		if (fan.reverseThrust == SilantroTurboFan.ReverseThrust.Available) {
+			GUILayout.Space(3f);
+			fan.reverseBuckets = EditorGUILayout.ObjectField ("Actuator", fan.reverseBuckets, typeof(SilantroHydraulicSystem), true) as SilantroHydraulicSystem;
+		}
+		//
+		GUILayout.Space(5f);
+		GUI.color = Color.white;
+		EditorGUILayout.HelpBox ("Nozzle System", MessageType.None);
+		GUI.color = backgroundColor;
+		GUILayout.Space(2f);
+		fan.canUseNozzle = EditorGUILayout.Toggle ("Available", fan.canUseNozzle);
+		if (fan.canUseNozzle) {
+			GUILayout.Space(3f);
+			fan.nozzleControl = EditorGUILayout.ObjectField ("Actuator", fan.nozzleControl, typeof(SilantroNozzle), true) as SilantroNozzle;
+		}
+		//
+		GUILayout.Space(25f);
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Fuel Configuration", MessageType.None);
+		GUI.color = backgroundColor;
+		//
+		//DISPLAY FUEL CONFIGURATION
+		GUILayout.Space(2f);
+		 fan.fuelType = (SilantroTurboFan.FuelType)EditorGUILayout.EnumPopup ("Fuel Type",  fan.fuelType);
+		//SET UP ENGINE FUEL COMBUSTION VALUES
+		if ( fan.fuelType == SilantroTurboFan.FuelType.JetB)
+		{
+			 fan.combustionEnergy = 42.8f;
+		}
+		else if ( fan.fuelType == SilantroTurboFan.FuelType.JetA1) 
+		{
+			 fan.combustionEnergy = 45.5f;
+		}
+		else if ( fan.fuelType == SilantroTurboFan.FuelType.JP6) 
+		{
+			 fan.combustionEnergy = 47.6f;
+		} 
+		else if ( fan.fuelType == SilantroTurboFan.FuelType.JP8)
+		{
+			 fan.combustionEnergy = 43.28f;
+		} 
+		//
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("Combustion Energy", fan.combustionEnergy.ToString("0.0")+" MJoules");
+		GUILayout.Space(3f);
+		GUI.color = Color.white;
+		EditorGUILayout.HelpBox ("Fuel Usage Settings", MessageType.None);
+		GUI.color = backgroundColor;
+		//
+		EditorGUILayout.LabelField ("Fuel Remaining",  fan.currentTankFuel.ToString ("0.00") + " kg");
+		GUILayout.Space(5f);
+		EditorGUILayout.HelpBox ("Thrust Specific fuel consumption in lb/lbf.hr", MessageType.None);
+		GUILayout.Space(3f);
+		 fan.TSFC = EditorGUILayout.FloatField ("Normal TSFC",  fan.TSFC);
+		if ( fan.reheatSystem == SilantroTurboFan.ReheatSystem.Afterburning) {
+			GUILayout.Space(2f);
+			 fan.AfterburnerTSFC = EditorGUILayout.FloatField ("Afterburner TSFC",  fan.AfterburnerTSFC);
+		}
+		GUILayout.Space(5f);
+		EditorGUILayout.LabelField ("Actual Consumption Rate", fan.actualConsumptionrate.ToString("0.00")+" kg/s");
+		 fan.criticalFuelLevel = EditorGUILayout.FloatField ("Critical Fuel Level",  fan.criticalFuelLevel);
+		//
+		GUILayout.Space(25f);
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Connections", MessageType.None);
+		GUI.color = backgroundColor;
+		GUILayout.Space(3f);
+		 fan.connectedAircraft = EditorGUILayout.ObjectField ("Connected Aircraft",  fan.connectedAircraft, typeof(Rigidbody), true) as Rigidbody;
+		GUILayout.Space(2f);
+		 fan.IntakePoint = EditorGUILayout.ObjectField ("Intake Fan",  fan.IntakePoint, typeof(Transform), true) as Transform;
+		GUILayout.Space(3f);
+		 fan.rotationAxis = (SilantroTurboFan.RotationAxis)EditorGUILayout.EnumPopup("Rotation Axis", fan.rotationAxis);
+		GUILayout.Space(3f);
+		 fan.rotationDirection = (SilantroTurboFan.RotationDirection)EditorGUILayout.EnumPopup("Rotation Direction", fan.rotationDirection);
+		//
+		GUILayout.Space(5f);
+		 fan.ExhaustPoint = EditorGUILayout.ObjectField ("ExhaustPoint",  fan.ExhaustPoint, typeof(Transform), true) as Transform;
+		//
+		//
+		GUILayout.Space(25f);
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Sound Configuration", MessageType.None);
+		GUI.color = backgroundColor;
+		GUILayout.Space(3f);
+		fan.soundState = (SilantroTurboFan.SoundState)EditorGUILayout.EnumPopup("Cabin Sounds", fan.soundState);
+		GUILayout.Space(5f);
+		if (fan.soundState == SilantroTurboFan.SoundState.Absent) {
+			fan.ExteriorIgnitionSound = EditorGUILayout.ObjectField ("Ignition Sound", fan.ExteriorIgnitionSound, typeof(AudioClip), true) as AudioClip;
+			GUILayout.Space (2f);
+			fan.ExteriorIdleSound = EditorGUILayout.ObjectField ("Engine Idle Sound", fan.ExteriorIdleSound, typeof(AudioClip), true) as AudioClip;
+			GUILayout.Space (2f);
+			fan.ExteriorShutdownSound = EditorGUILayout.ObjectField ("Shutdown Sound", fan.ExteriorShutdownSound, typeof(AudioClip), true) as AudioClip;
+			//
+		} else {
+			EngineTab = GUILayout.Toolbar (EngineTab, new string[]{ "Exterior Sounds", "Interior Sounds" });
+			GUILayout.Space(5f);
+			switch (EngineTab) {
+			case 0:
+				currentEngineTab = "Exterior Sounds";
+				break;
+			case 1:
+				currentEngineTab = "Interior Sounds";
+				break;
+			}
+			switch (currentEngineTab) {
+			case "Exterior Sounds":
+				fan.ExteriorIgnitionSound = EditorGUILayout.ObjectField ("Exterior Ignition", fan.ExteriorIgnitionSound, typeof(AudioClip), true) as AudioClip;
+				GUILayout.Space (2f);
+				fan.ExteriorIdleSound = EditorGUILayout.ObjectField ("Exterior Idle", fan.ExteriorIdleSound, typeof(AudioClip), true) as AudioClip;
+				GUILayout.Space (2f);
+				fan.ExteriorShutdownSound = EditorGUILayout.ObjectField ("Exterior Shutdown", fan.ExteriorShutdownSound, typeof(AudioClip), true) as AudioClip;
+				//
+				break;
+			case "Interior Sounds":
+				fan.InteriorIgnitionSound = EditorGUILayout.ObjectField ("Interior Ignition", fan.InteriorIgnitionSound, typeof(AudioClip), true) as AudioClip;
+				GUILayout.Space (2f);
+				fan.InteriorIdleSound = EditorGUILayout.ObjectField ("Interior Idle", fan.InteriorIdleSound, typeof(AudioClip), true) as AudioClip;
+				GUILayout.Space (2f);
+				fan.InteriorShutdownSound = EditorGUILayout.ObjectField ("Interior Shutdown", fan.InteriorShutdownSound, typeof(AudioClip), true) as AudioClip;
+				//
+				break;
+			}
+
+		}
+		GUILayout.Space(3f);
+		fan.adjustPitchSettings = EditorGUILayout.Toggle("Show Pitch Settings", fan.adjustPitchSettings);
+		GUILayout.Space(1f);
+		if ( fan.adjustPitchSettings) {
+			 fan.EngineIdlePitch = EditorGUILayout.FloatField ("Idle Pitch",  fan.EngineIdlePitch);
+			GUILayout.Space(2f);
+			 fan.EngineMaximumRPMPitch = EditorGUILayout.FloatField ("Maximum Pitch",  fan.EngineMaximumRPMPitch);
+			//
+			if ( fan.reheatSystem == SilantroTurboFan.ReheatSystem.Afterburning) {
+				GUILayout.Space(3f);
+				 fan.EngineAfterburnerPitch = EditorGUILayout.FloatField ("Afterburner Pitch",  fan.EngineAfterburnerPitch);
+			}
+		}
+		//
+		GUILayout.Space(10f);
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Engine Effects Configuration", MessageType.None);
+		GUI.color = backgroundColor;
+		fan.diplaySettings = EditorGUILayout.Toggle ("Show Extras",  fan.diplaySettings);
+		if ( fan.diplaySettings) {
+			GUILayout.Space (5f);
+			fan.exhaustSmoke = EditorGUILayout.ObjectField ("Exhaust Smoke",  fan.exhaustSmoke, typeof(ParticleSystem), true) as ParticleSystem;
+			GUILayout.Space (2f);
+			fan.maximumEmissionValue = EditorGUILayout.FloatField ("Maximum Emission",  fan.maximumEmissionValue);
+			//
+			GUILayout.Space (3f);
+			fan.engineDistortion = EditorGUILayout.ObjectField ("Engine Distortion",  fan.engineDistortion, typeof(ParticleSystem), true) as ParticleSystem;
+			GUILayout.Space (2f);
+			fan.maximumDistortionEmission = EditorGUILayout.FloatField ("Maximum Emission",  fan.maximumDistortionEmission);
+			//
+			//
+			GUILayout.Space (10f);
+			GUI.color = Color.white;
+			EditorGUILayout.HelpBox ("Exhaust Emission Configuration", MessageType.None);
+			GUI.color = backgroundColor;
+			GUILayout.Space (3f);
+			fan.engineMaterial = EditorGUILayout.ObjectField ("Core Material",  fan.engineMaterial, typeof(Material), true) as Material;
+			if ( fan.reheatSystem == SilantroTurboFan.ReheatSystem.Afterburning) {
+				GUILayout.Space (3f);
+				fan.afterburnerTubeMaterial = EditorGUILayout.ObjectField ("Afterburner Pipe Material",  fan.afterburnerTubeMaterial, typeof(Material), true) as Material;
+			} else {
+				GUILayout.Space (3f);
+				fan.afterburnerTubeMaterial = EditorGUILayout.ObjectField ("Pipe Material",  fan.afterburnerTubeMaterial, typeof(Material), true) as Material;
+			}
+			GUILayout.Space (3f);
+			fan.maximumNormalEmission = EditorGUILayout.FloatField ("Maximum Emission",  fan.maximumNormalEmission);
+			GUILayout.Space (2f);
+			if ( fan.reheatSystem == SilantroTurboFan.ReheatSystem.Afterburning) {
+				fan.maximumAfterburnerEmission = EditorGUILayout.FloatField ("Maximum Afterburner Emission",  fan.maximumAfterburnerEmission);
+			}
+		}
+		//
+		GUILayout.Space(25f);
+		GUI.color = silantroColor;
+		EditorGUILayout.HelpBox ("Engine Display", MessageType.None);
+		GUI.color = backgroundColor;
+		GUILayout.Space(3f);
+		//
+		EditorGUILayout.LabelField ("Throttle Level",( fan.FuelInput*100f).ToString("0.00") + " %");
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("Engine State", fan.CurrentEngineState.ToString());
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("Engine Power",( fan.corePower*100f).ToString("0.00") + " %");
+		GUILayout.Space(2f);
+		EditorGUILayout.LabelField ("EGT", fan.EGT.ToString("0.0")+ " °C");
+		GUILayout.Space(2f);
+		//
+		EditorGUILayout.LabelField ("Core Speed", fan.LPRPM.ToString("0.0")+ " RPM");
+		GUILayout.Space(5f);
+		GUI.color = Color.white;
+		EditorGUILayout.HelpBox ("Engine Output", MessageType.None);
+		GUI.color = backgroundColor;
+		EditorGUILayout.LabelField ("Engine Thrust", fan.EngineThrust.ToString("0.0")+ " N");
+		//
+		if (EditorGUI.EndChangeCheck ()) {Undo.RegisterCompleteObjectUndo (engineObject.targetObject, "Turbofan Engine Change");}
+		//
+		if (GUI.changed) {
+			EditorUtility.SetDirty (fan);
+			EditorSceneManager.MarkSceneDirty (fan.gameObject.scene);
+		}
+		engineObject.ApplyModifiedProperties();
+	}
+}
+#endif

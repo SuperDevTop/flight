@@ -1,0 +1,3 @@
+Open Scene
+1. Initilize the gun by clicking on the button
+2. Fire at will
